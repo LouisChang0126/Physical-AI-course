@@ -6,3 +6,20 @@ Spec: [Google Docs](https://docs.google.com/document/d/1QSbSWJ7s78h9QRS4EC3gsECF
 
 ## Preparation
 The replica dataset, you can use the same one in `hw0`.
+
+## Collect data
+```
+python load.py -f 1 # first floor
+python load.py -f 2 # second floor
+```
+## Run Task1
+```
+python bev.py
+```
+## Run Task2
+```
+python reconstruct.py -v open3d -f 1 # use open3d on first floor
+python reconstruct.py -v open3d -f 2 # use open3d on second floor
+python reconstruct.py -v my_icp -f 1 # use my_icp on first floor
+python reconstruct.py -v my_icp -f 2 # use my_icp on second floor
+```
