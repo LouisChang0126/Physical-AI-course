@@ -13,7 +13,7 @@ import shutil
 # This is the scene we are going to load.
 # support a variety of mesh formats, such as .glb, .gltf, .obj, .ply
 ### put your scene path ###
-test_scene = "replica_v1/apartment_0/habitat/mesh_semantic.ply"
+test_scene = "../../hw0/replica_v1/apartment_0/habitat/mesh_semantic.ply"
 
 sim_settings = {
     "scene": test_scene,  # Scene path
@@ -68,33 +68,33 @@ def make_simple_cfg(settings):
     ]
     rgb_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-    #depth snesor
-    depth_sensor_spec = habitat_sim.CameraSensorSpec()
-    depth_sensor_spec.uuid = "depth_sensor"
-    depth_sensor_spec.sensor_type = habitat_sim.SensorType.DEPTH
-    depth_sensor_spec.resolution = [settings["height"], settings["width"]]
-    depth_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
-    depth_sensor_spec.orientation = [
-        settings["sensor_pitch"],
-        0.0,
-        0.0,
-    ]
-    depth_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+    # #depth snesor
+    # depth_sensor_spec = habitat_sim.CameraSensorSpec()
+    # depth_sensor_spec.uuid = "depth_sensor"
+    # depth_sensor_spec.sensor_type = habitat_sim.SensorType.DEPTH
+    # depth_sensor_spec.resolution = [settings["height"], settings["width"]]
+    # depth_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
+    # depth_sensor_spec.orientation = [
+    #     settings["sensor_pitch"],
+    #     0.0,
+    #     0.0,
+    # ]
+    # depth_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-    #semantic snesor
-    semantic_sensor_spec = habitat_sim.CameraSensorSpec()
-    semantic_sensor_spec.uuid = "semantic_sensor"
-    semantic_sensor_spec.sensor_type = habitat_sim.SensorType.SEMANTIC
-    semantic_sensor_spec.resolution = [settings["height"], settings["width"]]
-    semantic_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
-    semantic_sensor_spec.orientation = [
-        settings["sensor_pitch"],
-        0.0,
-        0.0,
-    ]
-    semantic_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+    # #semantic snesor
+    # semantic_sensor_spec = habitat_sim.CameraSensorSpec()
+    # semantic_sensor_spec.uuid = "semantic_sensor"
+    # semantic_sensor_spec.sensor_type = habitat_sim.SensorType.SEMANTIC
+    # semantic_sensor_spec.resolution = [settings["height"], settings["width"]]
+    # semantic_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
+    # semantic_sensor_spec.orientation = [
+    #     settings["sensor_pitch"],
+    #     0.0,
+    #     0.0,
+    # ]
+    # semantic_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-    agent_cfg.sensor_specifications = [rgb_sensor_spec, depth_sensor_spec, semantic_sensor_spec]
+    agent_cfg.sensor_specifications = [rgb_sensor_spec]
 
     return habitat_sim.Configuration(sim_cfg, [agent_cfg])
 
@@ -104,8 +104,8 @@ def navigateAndSee(action="", data_root='data_collection/second_floor/'):
     #print("action: ", action)
 
     cv2.imshow("RGB", transform_rgb_bgr(observations["color_sensor"]))
-    cv2.imshow("depth", transform_depth(observations["depth_sensor"]))
-    cv2.imshow("semantic", transform_semantic(observations["semantic_sensor"]))
+    # cv2.imshow("depth", transform_depth(observations["depth_sensor"]))
+    # cv2.imshow("semantic", transform_semantic(observations["semantic_sensor"]))
     agent_state = agent.get_state()
     sensor_state = agent_state.sensor_states['color_sensor']
     print("Frame:", count)
@@ -114,8 +114,8 @@ def navigateAndSee(action="", data_root='data_collection/second_floor/'):
     
     count += 1
     cv2.imwrite(data_root + f"rgb/{count}.png", transform_rgb_bgr(observations["color_sensor"]))
-    cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
-    cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["semantic_sensor"]))
+    # cv2.imwrite(data_root + f"depth/{count}.png", transform_depth(observations["depth_sensor"]))
+    # cv2.imwrite(data_root + f"semantic/{count}.png", transform_semantic(observations["semantic_sensor"]))
     
     cam_extr.append([sensor_state.position[0], sensor_state.position[1], sensor_state.position[2], 
                     sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z])

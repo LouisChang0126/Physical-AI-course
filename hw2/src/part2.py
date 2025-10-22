@@ -10,7 +10,6 @@ from collections import namedtuple
 MAX_ITER = 6000
 STEP_SIZE = 100
 GOAL_THRESHOLD = 100
-SEARCH_RADIUS = 100
 
 Node = namedtuple("Node", ["x", "y", "parent"])
 
@@ -118,6 +117,7 @@ def part2():
 
     gy, gx = np.mean(coords, axis=0).astype(int)
     goal = (gx, gy)
+    print(f"Goal point: ({gx}, {gy})")
 
     start = get_start_point(map_img, goal)
     path, edges = RRT(start, goal, occ_map)
@@ -141,4 +141,8 @@ def part2():
         print(f"Path saved as path_{target}.png")
     else:
         print("No valid path found.")
-
+        
+    print("Path coordinates:")
+    for (x, y) in path:
+        print(f"({x}, {y})")
+    return target, path

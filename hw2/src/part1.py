@@ -14,9 +14,14 @@ def part1():
     # plot x-z plane
     x = points[:, 0]
     z = points[:, 2]
-
+    print(x.max(), x.min(), z.max(), z.min())
+    
     plt.figure(figsize=(6, 6))
     plt.scatter(x, z, c=colors / 255.0, s=0.1)
+
+    # === draw origin marker ===
+    plt.scatter(0.15872648367586087, 0.25272562492515155, c='red', s=80, marker='x', linewidths=2, label='(0,0)')
+    plt.legend(loc='upper right', fontsize=8)
     plt.gca().invert_yaxis()
     plt.axis('equal')
     plt.axis('off')
@@ -25,3 +30,6 @@ def part1():
     plt.close()
 
     print("saved as results/map.png")
+
+if __name__ == "__main__":
+    part1()
