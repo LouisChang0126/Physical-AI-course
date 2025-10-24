@@ -6,143 +6,195 @@ import random
 import math
 from collections import namedtuple
 
-# RRT Hyperparameters
-MAX_ITER = 6000
-STEP_SIZE = 100
-GOAL_THRESHOLD = 100
+def part2(meta):
+    # RRT Hyperparameters
+    MAX_ITER = 6000
+    STEP_SIZE = 0.02
+    GOAL_THRESHOLD = 0.03
+    SAFETY_RADIUS = 0.002
 
-Node = namedtuple("Node", ["x", "y", "parent"])
+    Node = namedtuple("Node", ["x", "z", "parent"])
 
-# load map
-map_img = cv2.imread("../results/map.png")
-h, w, _ = map_img.shape
-gray = cv2.cvtColor(map_img, cv2.COLOR_BGR2GRAY)
+    # load map
+    map_img = cv2.imread("../results/map.png")
+    if map_img is None:
+        raise FileNotFoundError("../results/map.png not found")
+    h, w, _ = map_img.shape
+    gray = cv2.cvtColor(map_img, cv2.COLOR_BGR2GRAY)
 
-# occupancy map
-_, occ_map = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY) # non-white pixels are obstacles
-occ_map = 255 - occ_map
-occ_map = occ_map > 0
+    # occupancy map
+    _, occ_map = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY)
+    occ_map = 255 - occ_map
+    occ_map = occ_map > 0
+    # occupancy map inflation
+    SAFETY_RADIUS_pixels = SAFETY_RADIUS * w / (meta['x_max'] - meta['x_min'])
+    k = 2 * math.ceil(SAFETY_RADIUS_pixels) + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    occ_map = cv2.dilate(occ_map.astype(np.uint8), kernel).astype(bool)
 
-# Parse color map from CSV
-df = pd.read_csv("../color_coding_semantic_segmentation_classes.csv", dtype=str)
-color_dict = {}
-for _, row in df.iterrows():
-    name = str(row.get("Name", "")).strip().lower()
-    rgb_str = row.get("Color_Code (R,G,B)", "")
-    if not name or not rgb_str:
-        continue
-    rgb = list(int(c) for c in rgb_str.strip("()").split(","))
-    bgr = [rgb[2], rgb[1], rgb[0]]  # Convert RGB to BGR
-    color_dict[name] = bgr
+    non_white_mask = np.any(map_img != 255, axis=2)  # True where pixel is not white
+    ys, xs = np.where(non_white_mask)
+    v_min, v_max = int(ys.min()), int(ys.max())  # rows
+    u_min, u_max = int(xs.min()), int(xs.max())  # cols
 
-# target color region
-def find_target_region(img, target_name):
-    if target_name not in color_dict:
-        raise ValueError(f"Target '{target_name}' does not exist in the color map.")
-    target_color = np.array(color_dict[target_name])
-    mask = np.all(img == target_color, axis=-1)
-    coords = np.column_stack(np.where(mask))
-    return coords
+    # transfer coordinates between pixel & world
+    def pixel_to_world(u, v):
+        if (u_max - u_min) == 0 or (v_max - v_min) == 0:
+            raise ValueError("degenerate non-white bbox")
+        x = meta['x_min'] + ( (u - u_min) / (u_max - u_min) ) * (meta['x_max'] - meta['x_min'])
+        z = meta['z_min'] + ( (v - v_min) / (v_max - v_min) ) * (meta['z_max'] - meta['z_min'])
+        return float(x), float(z)
 
-def distance(a, b):
-    return math.hypot(a[0] - b[0], a[1] - b[1])
+    def world_to_pixel(x, z):
+        if (meta['x_max'] - meta['x_min']) == 0 or (meta['z_max'] - meta['z_min']) == 0:
+            raise ValueError("degenerate world bbox")
+        u = u_min + ( (x - meta['x_min']) / (meta['x_max'] - meta['x_min']) ) * (u_max - u_min)
+        v = v_min + ( (z - meta['z_min']) / (meta['z_max'] - meta['z_min']) ) * (v_max - v_min)
+        return int(round(u)), int(round(v))
 
-def nearest(nodes, point):
-    dists = [distance((n.x, n.y), point) for n in nodes]
-    return nodes[np.argmin(dists)]
-
-def collision_free(a, b, occ_map):
-    x1, y1 = int(a[0]), int(a[1])
-    x2, y2 = int(b[0]), int(b[1])
-    line = np.linspace((x1, y1), (x2, y2), num=50).astype(int)
-    for x, y in line:
-        if x < 0 or y < 0 or x >= occ_map.shape[1] or y >= occ_map.shape[0]:
-            return False
-        if occ_map[y, x]:
-            return False
-    return True
-
-def RRT(start, goal, occ_map):
-    nodes = [Node(start[0], start[1], -1)]
-    edges = []
-    for i in range(MAX_ITER):
-        sample = goal if random.random() < 0.1 else (random.randint(0, w-1), random.randint(0, h-1))
-        nearest_node = nearest(nodes, sample)
-        theta = math.atan2(sample[1]-nearest_node.y, sample[0]-nearest_node.x)
-        new_x = int(nearest_node.x + STEP_SIZE * math.cos(theta))
-        new_y = int(nearest_node.y + STEP_SIZE * math.sin(theta))
-        if new_x < 0 or new_y < 0 or new_x >= w or new_y >= h:
+    # Parse color map from CSV
+    df = pd.read_csv("../color_coding_semantic_segmentation_classes.csv", dtype=str)
+    color_dict = {}
+    for _, row in df.iterrows():
+        name = str(row.get("Name", "")).strip().lower()
+        rgb_str = row.get("Color_Code (R,G,B)", "")
+        if not name or not rgb_str:
             continue
-        if not collision_free((nearest_node.x, nearest_node.y), (new_x, new_y), occ_map):
-            continue
+        rgb = list(int(c) for c in rgb_str.strip("()").split(","))
+        bgr = [rgb[2], rgb[1], rgb[0]]
+        color_dict[name] = bgr
+        
+    # target color region
+    def find_target_region(img, target_name):
+        if target_name not in color_dict:
+            raise ValueError(f"Target '{target_name}' does not exist.")
+        target_color = np.array(color_dict[target_name])
+        mask = np.all(img == target_color, axis=-1)
+        coords = np.column_stack(np.where(mask))  # rows, cols -> v,u
+        return coords
 
-        new_node = Node(new_x, new_y, nodes.index(nearest_node))
-        nodes.append(new_node)
-        edges.append(((nearest_node.x, nearest_node.y), (new_x, new_y)))
+    def distance(a, b):
+        return math.hypot(a[0] - b[0], a[1] - b[1])
 
-        if distance((new_x, new_y), goal) < GOAL_THRESHOLD:
-            print(f"Goal reached in {i} iterations!")
-            path = [(new_x, new_y)]
-            parent = new_node.parent
-            while parent != -1:
-                n = nodes[parent]
-                path.append((n.x, n.y))
-                parent = n.parent
-            path.reverse()
-            return path, edges
-    print("Failed to reach goal.")
-    return None, edges
+    def nearest(nodes, point):
+        dists = [distance((n.x, n.z), point) for n in nodes]
+        return nodes[np.argmin(dists)]
 
+    def collision_free(a, b):
+        ua, va = world_to_pixel(a[0], a[1])
+        ub, vb = world_to_pixel(b[0], b[1])
+        pix_dist = math.hypot(ub - ua, vb - va)
+        xs_world = np.linspace(a[0], b[0], max(20, int(pix_dist)))
+        zs_world = np.linspace(a[1], b[1], max(20, int(pix_dist)))
+        for xw, zw in zip(xs_world, zs_world):
+            u, v = world_to_pixel(xw, zw)
+            if u < 0 or v < 0 or u >= w or v >= h:
+                return False
+            if occ_map[v, u]:
+                return False
+        return True
 
-# use mouse to select start point
-def get_start_point(img, goal):
-    fig, ax = plt.subplots()
-    ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
-    ax.plot(goal[0], goal[1], 'go', markersize=5)  # Draw goal point
-    plt.title("map.png (please click to select start point)")
-    pts = plt.ginput(1, timeout=0)
-    plt.close()
-    if len(pts) == 0:
-        raise ValueError("No point selected.")
-    x, y = map(int, pts[0])
-    print(f"Selected point: ({x}, {y})")
-    return (x, y)
+    # RRT in world coordinates
+    def RRT(start, goal):
+        nodes = [Node(start[0], start[1], -1)]
+        edges = []
+        for i in range(MAX_ITER):
+            if random.random() < 0.1:
+                sample = goal
+            else:
+                x_rand = random.uniform(meta['x_min'], meta['x_max'])
+                z_rand = random.uniform(meta['z_min'], meta['z_max'])
+                sample = (x_rand, z_rand)
 
+            nearest_node = nearest(nodes, sample)
+            theta = math.atan2(sample[1] - nearest_node.z, sample[0] - nearest_node.x)
+            new_x = nearest_node.x + STEP_SIZE * math.cos(theta)
+            new_z = nearest_node.z + STEP_SIZE * math.sin(theta)
 
-def part2():
-    target = input("Enter target class (e.g., sofa, cooktop): ").strip().lower()
+            if not collision_free((nearest_node.x, nearest_node.z), (new_x, new_z)):
+                continue
+
+            new_node = Node(new_x, new_z, nodes.index(nearest_node))
+            nodes.append(new_node)
+            edges.append(((nearest_node.x, nearest_node.z), (new_x, new_z)))
+
+            if distance((new_x, new_z), goal) < GOAL_THRESHOLD:
+                path = [(new_x, new_z)]
+                parent = new_node.parent
+                while parent != -1:
+                    n = nodes[parent]
+                    path.append((n.x, n.z))
+                    parent = n.parent
+                path.reverse()
+                print(f"Goal reached in {i} iterations!")
+                return path, edges
+        print("Failed to reach goal.")
+        return None, edges
+
+    def get_start_point(img, goal_pixel):
+        fig, ax = plt.subplots()
+        ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
+        ax.plot(goal_pixel[0], goal_pixel[1], 'go', markersize=5)
+        plt.title("Select start point (click anywhere on image)")
+        pts = plt.ginput(1, timeout=0)
+        plt.close()
+        if not pts:
+            raise ValueError("No point selected.")
+        u, v = map(int, pts[0])
+        return pixel_to_world(u, v)
+
+    def simplify_path(path):
+        if not path or len(path) < 3:
+            return path
+        simplified = [path[0]]
+        i = 0
+        n = len(path)
+        while i < n - 1:
+            j = i + 1
+            while j + 1 < n and collision_free(path[i], path[j + 1]):
+                j += 1
+            simplified.append(path[j])
+            i = j
+        return simplified
+    
+    target = input("Enter target class (rack, cushion, sofa, stair, and cooktop): ").strip().lower()
     coords = find_target_region(map_img, target)
     if coords.size == 0:
         raise ValueError(f"No region found for {target}.")
 
-    gy, gx = np.mean(coords, axis=0).astype(int)
-    goal = (gx, gy)
-    print(f"Goal point: ({gx}, {gy})")
+    v_mean, u_mean = np.mean(coords, axis=0).astype(int)
+    goal_world = pixel_to_world(u_mean, v_mean)
+    start_world = get_start_point(map_img, (u_mean, v_mean))
 
-    start = get_start_point(map_img, goal)
-    path, edges = RRT(start, goal, occ_map)
-
+    path, edges = RRT(start_world, goal_world)
+    simplify = simplify_path(path)
+    
+    # draw edges & path on output image by converting world to pixel
     out = map_img.copy()
-
-    for (p1, p2) in edges:
+    for (a, b) in edges:
+        p1 = world_to_pixel(a[0], a[1])
+        p2 = world_to_pixel(b[0], b[1])
         cv2.line(out, p1, p2, (255, 0, 0), 1)
 
     if path:
-        cv2.circle(out, start, 7, (0, 0, 255), -1)
-        cv2.circle(out, goal, 7, (0, 255, 0), -1)
+        cv2.circle(out, world_to_pixel(*start_world), 7, (0, 0, 255), -1)
+        cv2.circle(out, world_to_pixel(*goal_world), 7, (0, 255, 0), -1)
         for i in range(1, len(path)):
-            cv2.line(out, path[i-1], path[i], (255, 0, 0), 3)
+            cv2.line(out, world_to_pixel(*path[i-1]), world_to_pixel(*path[i]), (255, 0, 0), 5)
+        for i in range(1, len(simplify)):
+            cv2.line(out, world_to_pixel(*simplify[i-1]), world_to_pixel(*simplify[i]), (0, 0, 255), 3)
         cv2.imwrite(f"path_{target}.png", out)
+    display = cv2.resize(out, None, fx=0.2, fy=0.2)
+    cv2.imshow("RRT", display)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
 
-        display_img = cv2.resize(out, None, fx=0.3, fy=0.3, interpolation=cv2.INTER_AREA)
-        cv2.imshow("RRT Path", display_img)
-        cv2.waitKey(0)
-        cv2.destroyAllWindows()
-        print(f"Path saved as path_{target}.png")
+    if path:
+        print(f"Path: {path}")
     else:
-        print("No valid path found.")
-        
-    print("Path coordinates:")
-    for (x, y) in path:
-        print(f"({x}, {y})")
+        print("No path found.")
     return target, path
+
+if __name__ == "__main__":
+    meta = {'x_min': -0.07876268489136715, 'x_max': 0.15872648367586087, 'z_min': -0.126199857783303, 'z_max': 0.25272562492515155}
+    part2(meta)

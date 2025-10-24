@@ -1,6 +1,5 @@
 import numpy as np
 from PIL import Image
-import numpy as np
 import habitat_sim
 from habitat_sim.utils.common import d3_40_colors_rgb
 import cv2
@@ -9,7 +8,6 @@ import sys
 import argparse
 import shutil
 import math
-import time
 
 def part3(target, path):
     # This is the scene we are going to load.
@@ -72,10 +70,10 @@ def part3(target, path):
                 "move_forward", habitat_sim.agent.ActuationSpec(amount=0.2)
             ),
             "turn_left": habitat_sim.agent.ActionSpec(
-                "turn_left", habitat_sim.agent.ActuationSpec(amount=10)
+                "turn_left", habitat_sim.agent.ActuationSpec(amount=5)
             ),
             "turn_right": habitat_sim.agent.ActionSpec(
-                "turn_right", habitat_sim.agent.ActuationSpec(amount=10)
+                "turn_right", habitat_sim.agent.ActuationSpec(amount=5)
             ),
         }
         return habitat_sim.Configuration(sim_cfg, [agent_cfg])
@@ -105,8 +103,6 @@ def part3(target, path):
     
     agent_state.position = np.array([path[0][0], 0.0, path[0][1]])  # agent in world space
     agent.set_state(agent_state)
-    # sofa place (0.62418485, 6.568676 )
-    # before stairs (5.75725, 8.64961) (0.1531, 0.2179)
 
     # obtain the default, discrete actions that an agent can perform
     # default action space contains 3 actions: move_forward, turn_left, and turn_right
@@ -128,20 +124,7 @@ def part3(target, path):
     
     def quat_to_yaw(w, x, y, z):
         return math.atan2(2.0 * (w * y + x * z), 1 - 2.0 * (y**2 + z**2))
-    
-    
-    
-    def rotate(agent, direction):
-        sensor_state = agent.get_state().sensor_states['color_sensor']
-        cur_yaw = math.atan2(2.0 * (sensor_state.rotation.w * sensor_state.rotation.y + sensor_state.rotation.x * sensor_state.rotation.z), 
-                            1.0 - 2.0 * (sensor_state.rotation.y**2 + sensor_state.rotation.z**2))
-        target_yaw = -math.atan2(direction[0], -direction[1])
-        yaw_diff = (target_yaw - cur_yaw + math.pi) % (2 * math.pi) - math.pi
-        deg_diff = np.degrees(yaw_diff)
-        action = 'turn_left' if deg_diff > 0 else 'turn_right'
-        return abs(deg_diff), action
-    
-    
+
     for pos_x, pos_z in path[1:]:
         while True:
             agent_state = agent.get_state()
@@ -150,10 +133,9 @@ def part3(target, path):
             z = sensor_state.position[2]
             rw = sensor_state.rotation.w
             ry = sensor_state.rotation.y
-            yaw = quat_to_yaw(rw, 0, ry, 0) # + np.pi
-                       
+            yaw = quat_to_yaw(rw, 0, ry, 0)
             
-            target_yaw = -math.atan2(pos_x - x, -pos_z + z) ####TO CHECK
+            target_yaw = -math.atan2(pos_x - x, -pos_z + z)
             angle_diff = np.degrees(np.arctan2(np.sin(target_yaw - yaw), np.cos(target_yaw - yaw))) # normalize to [-180, 180]
             print(f"Angle diff: {angle_diff:.2f}")
             if (pos_x - x)**2 + (pos_z - z)**2 < 0.01:
@@ -168,17 +150,16 @@ def part3(target, path):
                     navigateAndSee(count, action, data_root)
                     print("action: RIGHT")
             else:
-                # keystroke = cv2.waitKey(0)
                 action = "move_forward"
                 navigateAndSee(count, action, data_root)
                 print("action: FORWARD")
             count += 1
-            delay = 30
+            delay = 15
             cv2.waitKey(delay)
     print("Navigation completed")
 
 if __name__ == "__main__":
     target = "sofa"
-    path = [[-1.382007390456383, 1.75434305546239], [-0.28633701394519023, 3.0597333460650518], [0.4400846509745168, 2.7639976790791576], [1.5869147916890467, 3.567453289093996], [1.3882478614379405, 4.326188731008313], [1.186669721583586, 5.084155929193807], [0.9850915817292315, 5.842123127379303], [1.3564414734300616, 6.532953987956689], [1.4625523523218338, 7.310056620414671]]
+    path = [[-1.5151224595669213, 1.79722167221834], [-0.7430423362339239, 1.9352082771711916], [-0.6352199033984838, 2.7120752818571665], [0.0723455282925518, 3.050452556313045], [0.7278641765052094, 2.6198212501615292], [1.5000997061409256, 2.756935460805633], [1.581722813476753, 3.536990387295528], [1.3823660864495488, 4.295544878008826], [1.1830093594223445, 5.054099368722125], [0.9836526323951402, 5.812653859435423], [1.1081113994008882, 6.5870297599564305], [0.8744011054487613, 7.335713617464472], [1.5651284083055603, 7.707256095628788], [0.830519521126775, 7.982024730793461]]
 
     part3(target, path)
