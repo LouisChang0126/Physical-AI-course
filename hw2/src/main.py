@@ -33,7 +33,7 @@ def part1():
     plt.axis('equal')
     plt.axis('off')
     plt.tight_layout()
-    plt.savefig('../results/map.png', dpi=300, bbox_inches='tight', pad_inches=0)
+    plt.savefig('../results/map.png', dpi=600, bbox_inches='tight', pad_inches=0)
     plt.close()
 
     print("saved as results/map.png")
@@ -41,9 +41,10 @@ def part1():
 
 def part2(meta):
     # RRT Hyperparameters
-    MAX_ITER = 6000
+    MAX_ITER = 8000
     STEP_SIZE = 0.02
-    GOAL_THRESHOLD = 0.02
+    GOAL_THRESHOLD = 0.03
+    SAFETY_RADIUS = 0.002
 
     Node = namedtuple("Node", ["x", "z", "parent"])
 
@@ -54,10 +55,16 @@ def part2(meta):
     h, w, _ = map_img.shape
     gray = cv2.cvtColor(map_img, cv2.COLOR_BGR2GRAY)
 
-    # occupancy map (full image)
+    # occupancy map
     _, occ_map = cv2.threshold(gray, 250, 255, cv2.THRESH_BINARY)
     occ_map = 255 - occ_map
     occ_map = occ_map > 0
+    # occupancy map inflation
+    SAFETY_RADIUS_pixels = SAFETY_RADIUS * w / (meta['x_max'] - meta['x_min'])
+    print("SAFETY_RADIUS_pixels:", SAFETY_RADIUS_pixels)
+    k = 2 * math.ceil(SAFETY_RADIUS_pixels) + 1
+    kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (k, k))
+    occ_map = cv2.dilate(occ_map.astype(np.uint8), kernel).astype(bool)
 
     non_white_mask = np.any(map_img != 255, axis=2)  # True where pixel is not white
     ys, xs = np.where(non_white_mask)
@@ -205,8 +212,13 @@ def part2(meta):
         print("No path found.")
     return target, path
 
-
+def part3():
+    pass  # Placeholder for part3 function
 
 if __name__ == "__main__":
     meta = part1()
     target, path = part2(meta)
+    path = [[x * 10000./255 for x in row] for row in path]
+    # part3(target, path)
+    print(f"Target: {target}")
+    print(f"Path: {path}")
