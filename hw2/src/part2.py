@@ -13,8 +13,6 @@ def part2(meta):
     GOAL_THRESHOLD = 0.03
     SAFETY_RADIUS = 0.002
 
-    Node = namedtuple("Node", ["x", "z", "parent"])
-
     # load map
     map_img = cv2.imread("../results/map.png")
     if map_img is None:
@@ -52,8 +50,8 @@ def part2(meta):
         v = v_min + ( (z - meta['z_min']) / (meta['z_max'] - meta['z_min']) ) * (v_max - v_min)
         return int(round(u)), int(round(v))
 
-    # Parse color map from CSV
-    df = pd.read_csv("../color_coding_semantic_segmentation_classes.csv", dtype=str)
+    # Parse color map from xlsx
+    df = pd.read_excel("../color_coding_semantic_segmentation_classes.xlsx", dtype=str)
     color_dict = {}
     for _, row in df.iterrows():
         name = str(row.get("Name", "")).strip().lower()
@@ -71,7 +69,8 @@ def part2(meta):
         target_color = np.array(color_dict[target_name])
         mask = np.all(img == target_color, axis=-1)
         coords = np.column_stack(np.where(mask))  # rows, cols -> v,u
-        return coords
+        target_id = int(float(df.loc[df["Name"].eq(target_name)].iloc[0, 0]))
+        return target_id, coords
 
     def distance(a, b):
         return math.hypot(a[0] - b[0], a[1] - b[1])
@@ -96,6 +95,7 @@ def part2(meta):
 
     # RRT in world coordinates
     def RRT(start, goal):
+        Node = namedtuple("Node", ["x", "z", "parent"])
         nodes = [Node(start[0], start[1], -1)]
         edges = []
         for i in range(MAX_ITER):
@@ -131,6 +131,111 @@ def part2(meta):
         print("Failed to reach goal.")
         return None, edges
 
+    def RRT_star(start, goal):
+        Node = namedtuple("Node", ["x", "z", "parent", "cost"])
+        nodes = [Node(float(start[0]), float(start[1]), -1, 0.0)]
+
+        world_diam = math.hypot(meta['x_max'] - meta['x_min'], meta['z_max'] - meta['z_min'])
+        GAMMA = 0.8 * world_diam
+
+        def steer(from_xy, to_xy, step=STEP_SIZE):
+            dx, dz = to_xy[0] - from_xy[0], to_xy[1] - from_xy[1]
+            dist = math.hypot(dx, dz)
+            if dist <= 1e-12:
+                return from_xy
+            scale = min(1.0, step / dist)
+            return (from_xy[0] + dx * scale, from_xy[1] + dz * scale)
+
+        def nearest_index(pt):
+            best_i, best_d2 = 0, float("inf")
+            for i, n in enumerate(nodes):
+                d2 = (n.x - pt[0])**2 + (n.z - pt[1])**2
+                if d2 < best_d2:
+                    best_i, best_d2 = i, d2
+            return best_i
+
+        def neighbor_indices(center_xy, n_now):
+            r = max(1.5 * STEP_SIZE, GAMMA * math.sqrt(max(1e-9, math.log(n_now + 1) / (n_now + 1))))
+            r2 = r * r
+            cand = []
+            for i, n in enumerate(nodes):
+                if (n.x - center_xy[0])**2 + (n.z - center_xy[1])**2 <= r2:
+                    cand.append(i)
+            # sort by distance then cap
+            cand.sort(key=lambda i: (nodes[i].x - center_xy[0])**2 + (nodes[i].z - center_xy[1])**2)
+            return cand[:30]
+
+        def backtrack(last_idx):
+            path = []
+            p = last_idx
+            while p != -1:
+                n = nodes[p]
+                path.append((n.x, n.z))
+                p = n.parent
+            path.reverse()
+            return path
+
+        goal_idx = None
+        edges = []
+        for it in range(MAX_ITER):
+            if random.random() < 0.12:
+                sample = goal
+            else:
+                sample = (random.uniform(meta['x_min'], meta['x_max']), random.uniform(meta['z_min'], meta['z_max']))
+
+            # Nearest + steer
+            ni = nearest_index(sample)
+            xn = (nodes[ni].x, nodes[ni].z)
+            x_new = steer(xn, sample, STEP_SIZE)
+
+            if not collision_free(xn, x_new):
+                continue
+
+            # parent among neighbors
+            neigh = neighbor_indices(x_new, len(nodes))
+            best_parent = ni
+            best_cost = nodes[ni].cost + distance(xn, x_new)
+
+            for j in neigh:
+                pj = (nodes[j].x, nodes[j].z)
+                if not collision_free(pj, x_new):
+                    continue
+                cand_cost = nodes[j].cost + distance(pj, x_new)
+                if cand_cost + 1e-12 < best_cost:
+                    best_parent = j
+                    best_cost = cand_cost
+
+            # add node
+            nodes.append(Node(x_new[0], x_new[1], best_parent, best_cost))
+            new_idx = len(nodes) - 1
+
+            # rewire neighbors if improves cost
+            for j in neigh:
+                if j == best_parent or j == new_idx:
+                    continue
+                pj = (nodes[j].x, nodes[j].z)
+                alt_cost = nodes[new_idx].cost + distance(x_new, pj)
+                if alt_cost + 1e-12 < nodes[j].cost and collision_free(x_new, pj):
+                    nodes[j] = Node(nodes[j].x, nodes[j].z, new_idx, alt_cost)
+
+            if distance(x_new, goal) < GOAL_THRESHOLD:
+                goal_idx = new_idx
+                print(f"Goal reached (RRT*) in {it} iterations!")
+                path = backtrack(goal_idx)
+                for i in range(1, len(nodes)):
+                    p = nodes[i].parent
+                    if p >= 0:
+                        edges.append(((nodes[p].x, nodes[p].z), (nodes[i].x, nodes[i].z)))
+                return path, edges
+
+        print("Failed to reach goal (RRT*).")
+        for i in range(1, len(nodes)):
+            p = nodes[i].parent
+            if p >= 0:
+                edges.append(((nodes[p].x, nodes[p].z), (nodes[i].x, nodes[i].z)))
+        return None, edges
+
+    
     def get_start_point(img, goal_pixel):
         fig, ax = plt.subplots()
         ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -158,7 +263,7 @@ def part2(meta):
         return simplified
     
     target = input("Enter target class (rack, cushion, sofa, stair, and cooktop): ").strip().lower()
-    coords = find_target_region(map_img, target)
+    target_id, coords = find_target_region(map_img, target)
     if coords.size == 0:
         raise ValueError(f"No region found for {target}.")
 
@@ -166,7 +271,7 @@ def part2(meta):
     goal_world = pixel_to_world(u_mean, v_mean)
     start_world = get_start_point(map_img, (u_mean, v_mean))
 
-    path, edges = RRT(start_world, goal_world)
+    path, edges = RRT_star(start_world, goal_world)
     simplify = simplify_path(path)
     
     # draw edges & path on output image by converting world to pixel
@@ -183,7 +288,7 @@ def part2(meta):
             cv2.line(out, world_to_pixel(*path[i-1]), world_to_pixel(*path[i]), (255, 0, 0), 5)
         for i in range(1, len(simplify)):
             cv2.line(out, world_to_pixel(*simplify[i-1]), world_to_pixel(*simplify[i]), (0, 0, 255), 3)
-        cv2.imwrite(f"path_{target}.png", out)
+        cv2.imwrite(f"../results/path_{target}.png", out)
     display = cv2.resize(out, None, fx=0.2, fy=0.2)
     cv2.imshow("RRT", display)
     cv2.waitKey(0)
@@ -193,8 +298,10 @@ def part2(meta):
         print(f"Path: {path}")
     else:
         print("No path found.")
-    return target, path
+    return target_id, simplify
 
 if __name__ == "__main__":
     meta = {'x_min': -0.07876268489136715, 'x_max': 0.15872648367586087, 'z_min': -0.126199857783303, 'z_max': 0.25272562492515155}
-    part2(meta)
+    target_id, simplify = part2(meta)
+    print("target_id:", target_id)
+    print("simplified path:", simplify)

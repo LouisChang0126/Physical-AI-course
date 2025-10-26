@@ -5,6 +5,10 @@ Spec: https://drive.google.com/file/d/1YdGHuwxW4AOitrrfvNO55kCfEAbjpCMl/view?usp
 
 ## Preparation
 In your original pdm-f24 directory, `git pull` to get new `hw2` directory.
+```
+# to read .xlsx
+pip install openpyxl
+```
 
 ## How to run
 to run all parts

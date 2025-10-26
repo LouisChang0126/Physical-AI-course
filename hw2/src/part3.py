@@ -8,10 +8,12 @@ import sys
 import argparse
 import shutil
 import math
+import json
 
-def part3(target, path):
+def part3(target_id, path):
     # This is the scene we are going to load.
     test_scene = "../../hw0/replica_v1/apartment_0/habitat/mesh_semantic.ply"
+    test_scene_info_semantic = "../../hw0/replica_v1/apartment_0/habitat/info_semantic.json"
 
     sim_settings = {
         "scene": test_scene,  # Scene path
@@ -30,19 +32,14 @@ def part3(target, path):
 
     def transform_rgb_bgr(image):
         return image[:, :, [2, 1, 0]]
-
-    def transform_depth(image):
-        depth_img = (image / 10 * 255).astype(np.uint8)
-        return depth_img
-
-    def transform_semantic(semantic_obs):
-        semantic_img = Image.new("P", (semantic_obs.shape[1], semantic_obs.shape[0]))
-        semantic_img.putpalette(d3_40_colors_rgb.flatten())
-        semantic_img.putdata((semantic_obs.flatten() % 40).astype(np.uint8))
-        semantic_img = semantic_img.convert("RGB")
-        semantic_img = cv2.cvtColor(np.asarray(semantic_img), cv2.COLOR_RGB2BGR)
-        return semantic_img
-
+            
+    def semantic_label_to_id(semantic_sensor_label):
+        with open(test_scene_info_semantic, "r") as f:
+            annotations = json.load(f)
+            id_to_label = np.where(np.array(annotations["id_to_label"]) < 0, 0, annotations["id_to_label"])
+            id_mask = id_to_label[semantic_sensor_label]
+            return id_mask
+        
     def make_simple_cfg(settings):
         # simulator backend
         sim_cfg = habitat_sim.SimulatorConfiguration()
@@ -64,7 +61,20 @@ def part3(target, path):
         ]
         rgb_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-        agent_cfg.sensor_specifications = [rgb_sensor_spec]
+        #semantic snesor
+        semantic_sensor_spec = habitat_sim.CameraSensorSpec()
+        semantic_sensor_spec.uuid = "semantic_sensor"
+        semantic_sensor_spec.sensor_type = habitat_sim.SensorType.SEMANTIC
+        semantic_sensor_spec.resolution = [settings["height"], settings["width"]]
+        semantic_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
+        semantic_sensor_spec.orientation = [
+            settings["sensor_pitch"],
+            0.0,
+            0.0,
+        ]
+        semantic_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+    
+        agent_cfg.sensor_specifications = [rgb_sensor_spec, semantic_sensor_spec]
         agent_cfg.action_space = {
             "move_forward": habitat_sim.agent.ActionSpec(
                 "move_forward", habitat_sim.agent.ActuationSpec(amount=0.2)
@@ -80,16 +90,23 @@ def part3(target, path):
 
     def navigateAndSee(count, action="", data_root='data_collection/second_floor/'):
         observations = sim.step(action)
-        #print("action: ", action)
+        
+        rgb_img = transform_rgb_bgr(observations["color_sensor"])
+        # add overlay for target object
+        semantic_id_mask = semantic_label_to_id(observations["semantic_sensor"])
+        target_id_region = semantic_id_mask == target_id
+        overlay = rgb_img.copy()
+        overlay[target_id_region] = (0, 0, 255)
+        rgb_img = cv2.addWeighted(rgb_img, 0.5, overlay, 0.5, 0.0)
 
-        cv2.imshow("RGB", transform_rgb_bgr(observations["color_sensor"]))
+        cv2.imshow("RGB", rgb_img)
         agent_state = agent.get_state()
         sensor_state = agent_state.sensor_states['color_sensor']
-        print("Frame:", count)
+        # print("Frame:", count)
         print("camera pose: x y z rw rx ry rz")
         print(sensor_state.position[0],sensor_state.position[1],sensor_state.position[2], sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
         
-        cv2.imwrite(data_root + f"rgb/{count}.png", transform_rgb_bgr(observations["color_sensor"]))
+        cv2.imwrite(data_root + f"rgb/{count}.png", rgb_img)
     
     cfg = make_simple_cfg(sim_settings)
     sim = habitat_sim.Simulator(cfg)
@@ -137,7 +154,7 @@ def part3(target, path):
             
             target_yaw = -math.atan2(pos_x - x, -pos_z + z)
             angle_diff = np.degrees(np.arctan2(np.sin(target_yaw - yaw), np.cos(target_yaw - yaw))) # normalize to [-180, 180]
-            print(f"Angle diff: {angle_diff:.2f}")
+            # print(f"Angle diff: {angle_diff:.2f}")
             if (pos_x - x)**2 + (pos_z - z)**2 < 0.01:
                 break
             elif abs(angle_diff) > 5:
@@ -159,7 +176,7 @@ def part3(target, path):
     print("Navigation completed")
 
 if __name__ == "__main__":
-    target = "sofa"
+    target_id = 76 # sofa
     path = [[-1.5151224595669213, 1.79722167221834], [-0.7430423362339239, 1.9352082771711916], [-0.6352199033984838, 2.7120752818571665], [0.0723455282925518, 3.050452556313045], [0.7278641765052094, 2.6198212501615292], [1.5000997061409256, 2.756935460805633], [1.581722813476753, 3.536990387295528], [1.3823660864495488, 4.295544878008826], [1.1830093594223445, 5.054099368722125], [0.9836526323951402, 5.812653859435423], [1.1081113994008882, 6.5870297599564305], [0.8744011054487613, 7.335713617464472], [1.5651284083055603, 7.707256095628788], [0.830519521126775, 7.982024730793461]]
 
-    part3(target, path)
+    part3(target_id, path)

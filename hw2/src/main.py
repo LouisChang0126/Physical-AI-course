@@ -11,6 +11,7 @@ import pandas as pd
 import random
 import math
 from collections import namedtuple
+import json
 
 def part1():
     points = np.load('../semantic_3d_pointcloud/point.npy')
@@ -51,8 +52,6 @@ def part2(meta):
     GOAL_THRESHOLD = 0.03
     SAFETY_RADIUS = 0.002
 
-    Node = namedtuple("Node", ["x", "z", "parent"])
-
     # load map
     map_img = cv2.imread("../results/map.png")
     if map_img is None:
@@ -90,8 +89,8 @@ def part2(meta):
         v = v_min + ( (z - meta['z_min']) / (meta['z_max'] - meta['z_min']) ) * (v_max - v_min)
         return int(round(u)), int(round(v))
 
-    # Parse color map from CSV
-    df = pd.read_csv("../color_coding_semantic_segmentation_classes.csv", dtype=str)
+    # Parse color map from xlsx
+    df = pd.read_excel("../color_coding_semantic_segmentation_classes.xlsx", dtype=str)
     color_dict = {}
     for _, row in df.iterrows():
         name = str(row.get("Name", "")).strip().lower()
@@ -109,7 +108,8 @@ def part2(meta):
         target_color = np.array(color_dict[target_name])
         mask = np.all(img == target_color, axis=-1)
         coords = np.column_stack(np.where(mask))  # rows, cols -> v,u
-        return coords
+        target_id = int(float(df.loc[df["Name"].eq(target_name)].iloc[0, 0]))
+        return target_id, coords
 
     def distance(a, b):
         return math.hypot(a[0] - b[0], a[1] - b[1])
@@ -134,6 +134,7 @@ def part2(meta):
 
     # RRT in world coordinates
     def RRT(start, goal):
+        Node = namedtuple("Node", ["x", "z", "parent"])
         nodes = [Node(start[0], start[1], -1)]
         edges = []
         for i in range(MAX_ITER):
@@ -169,6 +170,111 @@ def part2(meta):
         print("Failed to reach goal.")
         return None, edges
 
+    def RRT_star(start, goal):
+        Node = namedtuple("Node", ["x", "z", "parent", "cost"])
+        nodes = [Node(float(start[0]), float(start[1]), -1, 0.0)]
+
+        world_diam = math.hypot(meta['x_max'] - meta['x_min'], meta['z_max'] - meta['z_min'])
+        GAMMA = 0.8 * world_diam
+
+        def steer(from_xy, to_xy, step=STEP_SIZE):
+            dx, dz = to_xy[0] - from_xy[0], to_xy[1] - from_xy[1]
+            dist = math.hypot(dx, dz)
+            if dist <= 1e-12:
+                return from_xy
+            scale = min(1.0, step / dist)
+            return (from_xy[0] + dx * scale, from_xy[1] + dz * scale)
+
+        def nearest_index(pt):
+            best_i, best_d2 = 0, float("inf")
+            for i, n in enumerate(nodes):
+                d2 = (n.x - pt[0])**2 + (n.z - pt[1])**2
+                if d2 < best_d2:
+                    best_i, best_d2 = i, d2
+            return best_i
+
+        def neighbor_indices(center_xy, n_now):
+            r = max(1.5 * STEP_SIZE, GAMMA * math.sqrt(max(1e-9, math.log(n_now + 1) / (n_now + 1))))
+            r2 = r * r
+            cand = []
+            for i, n in enumerate(nodes):
+                if (n.x - center_xy[0])**2 + (n.z - center_xy[1])**2 <= r2:
+                    cand.append(i)
+            # sort by distance then cap
+            cand.sort(key=lambda i: (nodes[i].x - center_xy[0])**2 + (nodes[i].z - center_xy[1])**2)
+            return cand[:30]
+
+        def backtrack(last_idx):
+            path = []
+            p = last_idx
+            while p != -1:
+                n = nodes[p]
+                path.append((n.x, n.z))
+                p = n.parent
+            path.reverse()
+            return path
+
+        goal_idx = None
+        edges = []
+        for it in range(MAX_ITER):
+            if random.random() < 0.12:
+                sample = goal
+            else:
+                sample = (random.uniform(meta['x_min'], meta['x_max']), random.uniform(meta['z_min'], meta['z_max']))
+
+            # Nearest + steer
+            ni = nearest_index(sample)
+            xn = (nodes[ni].x, nodes[ni].z)
+            x_new = steer(xn, sample, STEP_SIZE)
+
+            if not collision_free(xn, x_new):
+                continue
+
+            # parent among neighbors
+            neigh = neighbor_indices(x_new, len(nodes))
+            best_parent = ni
+            best_cost = nodes[ni].cost + distance(xn, x_new)
+
+            for j in neigh:
+                pj = (nodes[j].x, nodes[j].z)
+                if not collision_free(pj, x_new):
+                    continue
+                cand_cost = nodes[j].cost + distance(pj, x_new)
+                if cand_cost + 1e-12 < best_cost:
+                    best_parent = j
+                    best_cost = cand_cost
+
+            # add node
+            nodes.append(Node(x_new[0], x_new[1], best_parent, best_cost))
+            new_idx = len(nodes) - 1
+
+            # rewire neighbors if improves cost
+            for j in neigh:
+                if j == best_parent or j == new_idx:
+                    continue
+                pj = (nodes[j].x, nodes[j].z)
+                alt_cost = nodes[new_idx].cost + distance(x_new, pj)
+                if alt_cost + 1e-12 < nodes[j].cost and collision_free(x_new, pj):
+                    nodes[j] = Node(nodes[j].x, nodes[j].z, new_idx, alt_cost)
+
+            if distance(x_new, goal) < GOAL_THRESHOLD:
+                goal_idx = new_idx
+                print(f"Goal reached (RRT*) in {it} iterations!")
+                path = backtrack(goal_idx)
+                for i in range(1, len(nodes)):
+                    p = nodes[i].parent
+                    if p >= 0:
+                        edges.append(((nodes[p].x, nodes[p].z), (nodes[i].x, nodes[i].z)))
+                return path, edges
+
+        print("Failed to reach goal (RRT*).")
+        for i in range(1, len(nodes)):
+            p = nodes[i].parent
+            if p >= 0:
+                edges.append(((nodes[p].x, nodes[p].z), (nodes[i].x, nodes[i].z)))
+        return None, edges
+
+    
     def get_start_point(img, goal_pixel):
         fig, ax = plt.subplots()
         ax.imshow(cv2.cvtColor(img, cv2.COLOR_BGR2RGB))
@@ -196,7 +302,7 @@ def part2(meta):
         return simplified
     
     target = input("Enter target class (rack, cushion, sofa, stair, and cooktop): ").strip().lower()
-    coords = find_target_region(map_img, target)
+    target_id, coords = find_target_region(map_img, target)
     if coords.size == 0:
         raise ValueError(f"No region found for {target}.")
 
@@ -204,7 +310,7 @@ def part2(meta):
     goal_world = pixel_to_world(u_mean, v_mean)
     start_world = get_start_point(map_img, (u_mean, v_mean))
 
-    path, edges = RRT(start_world, goal_world)
+    path, edges = RRT_star(start_world, goal_world)
     simplify = simplify_path(path)
     
     # draw edges & path on output image by converting world to pixel
@@ -231,11 +337,12 @@ def part2(meta):
         print(f"Path: {path}")
     else:
         print("No path found.")
-    return target, simplify
+    return target_id, simplify
 
-def part3(target, path):
+def part3(target_id, path):
     # This is the scene we are going to load.
     test_scene = "../../hw0/replica_v1/apartment_0/habitat/mesh_semantic.ply"
+    test_scene_info_semantic = "../../hw0/replica_v1/apartment_0/habitat/info_semantic.json"
 
     sim_settings = {
         "scene": test_scene,  # Scene path
@@ -254,19 +361,14 @@ def part3(target, path):
 
     def transform_rgb_bgr(image):
         return image[:, :, [2, 1, 0]]
-
-    def transform_depth(image):
-        depth_img = (image / 10 * 255).astype(np.uint8)
-        return depth_img
-
-    def transform_semantic(semantic_obs):
-        semantic_img = Image.new("P", (semantic_obs.shape[1], semantic_obs.shape[0]))
-        semantic_img.putpalette(d3_40_colors_rgb.flatten())
-        semantic_img.putdata((semantic_obs.flatten() % 40).astype(np.uint8))
-        semantic_img = semantic_img.convert("RGB")
-        semantic_img = cv2.cvtColor(np.asarray(semantic_img), cv2.COLOR_RGB2BGR)
-        return semantic_img
-
+            
+    def semantic_label_to_id(semantic_sensor_label):
+        with open(test_scene_info_semantic, "r") as f:
+            annotations = json.load(f)
+            id_to_label = np.where(np.array(annotations["id_to_label"]) < 0, 0, annotations["id_to_label"])
+            id_mask = id_to_label[semantic_sensor_label]
+            return id_mask
+        
     def make_simple_cfg(settings):
         # simulator backend
         sim_cfg = habitat_sim.SimulatorConfiguration()
@@ -288,7 +390,20 @@ def part3(target, path):
         ]
         rgb_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
 
-        agent_cfg.sensor_specifications = [rgb_sensor_spec]
+        #semantic snesor
+        semantic_sensor_spec = habitat_sim.CameraSensorSpec()
+        semantic_sensor_spec.uuid = "semantic_sensor"
+        semantic_sensor_spec.sensor_type = habitat_sim.SensorType.SEMANTIC
+        semantic_sensor_spec.resolution = [settings["height"], settings["width"]]
+        semantic_sensor_spec.position = [0.0, settings["sensor_height"], 0.0]
+        semantic_sensor_spec.orientation = [
+            settings["sensor_pitch"],
+            0.0,
+            0.0,
+        ]
+        semantic_sensor_spec.sensor_subtype = habitat_sim.SensorSubType.PINHOLE
+    
+        agent_cfg.sensor_specifications = [rgb_sensor_spec, semantic_sensor_spec]
         agent_cfg.action_space = {
             "move_forward": habitat_sim.agent.ActionSpec(
                 "move_forward", habitat_sim.agent.ActuationSpec(amount=0.2)
@@ -304,16 +419,23 @@ def part3(target, path):
 
     def navigateAndSee(count, action="", data_root='data_collection/second_floor/'):
         observations = sim.step(action)
-        #print("action: ", action)
+        
+        rgb_img = transform_rgb_bgr(observations["color_sensor"])
+        # add overlay for target object
+        semantic_id_mask = semantic_label_to_id(observations["semantic_sensor"])
+        target_id_region = semantic_id_mask == target_id
+        overlay = rgb_img.copy()
+        overlay[target_id_region] = (0, 0, 255)
+        rgb_img = cv2.addWeighted(rgb_img, 0.5, overlay, 0.5, 0.0)
 
-        cv2.imshow("RGB", transform_rgb_bgr(observations["color_sensor"]))
+        cv2.imshow("RGB", rgb_img)
         agent_state = agent.get_state()
         sensor_state = agent_state.sensor_states['color_sensor']
-        print("Frame:", count)
+        # print("Frame:", count)
         print("camera pose: x y z rw rx ry rz")
         print(sensor_state.position[0],sensor_state.position[1],sensor_state.position[2], sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
         
-        cv2.imwrite(data_root + f"rgb/{count}.png", transform_rgb_bgr(observations["color_sensor"]))
+        cv2.imwrite(data_root + f"rgb/{count}.png", rgb_img)
     
     cfg = make_simple_cfg(sim_settings)
     sim = habitat_sim.Simulator(cfg)
@@ -361,7 +483,7 @@ def part3(target, path):
             
             target_yaw = -math.atan2(pos_x - x, -pos_z + z)
             angle_diff = np.degrees(np.arctan2(np.sin(target_yaw - yaw), np.cos(target_yaw - yaw))) # normalize to [-180, 180]
-            print(f"Angle diff: {angle_diff:.2f}")
+            # print(f"Angle diff: {angle_diff:.2f}")
             if (pos_x - x)**2 + (pos_z - z)**2 < 0.01:
                 break
             elif abs(angle_diff) > 5:
@@ -384,6 +506,6 @@ def part3(target, path):
     
 if __name__ == "__main__":
     meta = part1()
-    target, path = part2(meta)
+    target_id, path = part2(meta)
     path = [[x * 10000./255 for x in row] for row in path]
-    part3(target, path)
+    part3(target_id, path)
