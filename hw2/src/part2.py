@@ -271,7 +271,10 @@ def part2(meta):
     goal_world = pixel_to_world(u_mean, v_mean)
     start_world = get_start_point(map_img, (u_mean, v_mean))
 
-    path, edges = RRT_star(start_world, goal_world)
+    # switch RRT / RRT*
+    path, edges = RRT(start_world, goal_world)
+    # path, edges = RRT_star(start_world, goal_world)
+    
     simplify = simplify_path(path)
     
     # draw edges & path on output image by converting world to pixel
