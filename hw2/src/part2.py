@@ -178,7 +178,7 @@ def part2(meta):
         goal_idx = None
         edges = []
         for it in range(MAX_ITER):
-            if random.random() < 0.12:
+            if random.random() < 0.1:
                 sample = goal
             else:
                 sample = (random.uniform(meta['x_min'], meta['x_max']), random.uniform(meta['z_min'], meta['z_max']))
@@ -293,15 +293,13 @@ def part2(meta):
     cv2.imshow("RRT", display)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
-
-    if path:
-        print(f"Path: {path}")
-    else:
-        print("No path found.")
-    return target_id, simplify
+    
+    return target_id, target, simplify
 
 if __name__ == "__main__":
     meta = {'x_min': -0.07876268489136715, 'x_max': 0.15872648367586087, 'z_min': -0.126199857783303, 'z_max': 0.25272562492515155}
-    target_id, simplify = part2(meta)
+    target_id, target, simplify = part2(meta)
+    simplify = [[x * 10000./255 for x in row] for row in simplify]
     print("target_id:", target_id)
+    print("target_name:", target)
     print("simplified path:", simplify)

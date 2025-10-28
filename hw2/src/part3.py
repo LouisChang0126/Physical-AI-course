@@ -9,8 +9,9 @@ import argparse
 import shutil
 import math
 import json
+import glob
 
-def part3(target_id, path):
+def part3(target_id, target, path):
     # This is the scene we are going to load.
     test_scene = "../../hw0/replica_v1/apartment_0/habitat/mesh_semantic.ply"
     test_scene_info_semantic = "../../hw0/replica_v1/apartment_0/habitat/info_semantic.json"
@@ -107,6 +108,46 @@ def part3(target_id, path):
         print(sensor_state.position[0],sensor_state.position[1],sensor_state.position[2], sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
         
         cv2.imwrite(data_root + f"rgb/{count}.png", rgb_img)
+
+    def frames_to_gif(frames_dir, out_gif_path, fps=10, hold_last_ms=500):
+        files = glob.glob(os.path.join(frames_dir, "*.png"))
+        if not files:
+            raise FileNotFoundError(f"No frames found in: {frames_dir}")
+
+        def sort_key(p):
+            base = os.path.splitext(os.path.basename(p))[0]
+            try:
+                return int(base)
+            except ValueError:
+                return base
+
+        files = sorted(files, key=sort_key)
+
+        imgs = []
+        first_size = None
+        for f in files:
+            im = Image.open(f).convert("RGB")
+            if first_size is None:
+                first_size = im.size
+            elif im.size != first_size:
+                im = im.resize(first_size, Image.BILINEAR)
+            imgs.append(im)
+
+        frame_duration = max(1, int(round(1000 / fps)))
+        durations = [frame_duration] * len(imgs)
+        if hold_last_ms and len(durations) > 0:
+            durations[-1] += int(hold_last_ms)
+
+        imgs[0].save(
+            out_gif_path,
+            save_all=True,
+            append_images=imgs[1:],
+            duration=durations,
+            loop=0,
+            disposal=2,
+            optimize=True,
+        )
+        print(f"Saved GIF: {out_gif_path} ({len(imgs)} frames)")
     
     cfg = make_simple_cfg(sim_settings)
     sim = habitat_sim.Simulator(cfg)
@@ -174,9 +215,10 @@ def part3(target_id, path):
             delay = 15
             cv2.waitKey(delay)
     print("Navigation completed")
+    frames_to_gif(data_root + "rgb/", f"../results/{target}.gif")
 
 if __name__ == "__main__":
-    target_id = 76 # sofa
-    path = [[-1.5151224595669213, 1.79722167221834], [-0.7430423362339239, 1.9352082771711916], [-0.6352199033984838, 2.7120752818571665], [0.0723455282925518, 3.050452556313045], [0.7278641765052094, 2.6198212501615292], [1.5000997061409256, 2.756935460805633], [1.581722813476753, 3.536990387295528], [1.3823660864495488, 4.295544878008826], [1.1830093594223445, 5.054099368722125], [0.9836526323951402, 5.812653859435423], [1.1081113994008882, 6.5870297599564305], [0.8744011054487613, 7.335713617464472], [1.5651284083055603, 7.707256095628788], [0.830519521126775, 7.982024730793461]]
-
-    part3(target_id, path)
+    target_id = 76
+    target = "sofa"
+    path = [[-1.909713557287445, 2.683379751841304], [-1.5534433589064658, 4.1961892323312036], [0.4246563671975674, 6.719354677674333], [0.8661191852905288, 7.585695948856784], [0.9131905104541479, 7.851233712152422]]
+    part3(target_id, target, path)

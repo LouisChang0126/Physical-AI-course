@@ -217,7 +217,7 @@ def part2(meta):
         goal_idx = None
         edges = []
         for it in range(MAX_ITER):
-            if random.random() < 0.12:
+            if random.random() < 0.1:
                 sample = goal
             else:
                 sample = (random.uniform(meta['x_min'], meta['x_max']), random.uniform(meta['z_min'], meta['z_max']))
@@ -332,14 +332,10 @@ def part2(meta):
     cv2.imshow("RRT", display)
     cv2.waitKey(0)
     cv2.destroyAllWindows()
+    
+    return target_id, target, simplify
 
-    if path:
-        print(f"Path: {path}")
-    else:
-        print("No path found.")
-    return target_id, simplify
-
-def part3(target_id, path):
+def part3(target_id, target, path):
     # This is the scene we are going to load.
     test_scene = "../../hw0/replica_v1/apartment_0/habitat/mesh_semantic.ply"
     test_scene_info_semantic = "../../hw0/replica_v1/apartment_0/habitat/info_semantic.json"
@@ -436,6 +432,46 @@ def part3(target_id, path):
         print(sensor_state.position[0],sensor_state.position[1],sensor_state.position[2], sensor_state.rotation.w, sensor_state.rotation.x, sensor_state.rotation.y, sensor_state.rotation.z)
         
         cv2.imwrite(data_root + f"rgb/{count}.png", rgb_img)
+
+    def frames_to_gif(frames_dir, out_gif_path, fps=10, hold_last_ms=500):
+        files = glob.glob(os.path.join(frames_dir, "*.png"))
+        if not files:
+            raise FileNotFoundError(f"No frames found in: {frames_dir}")
+
+        def sort_key(p):
+            base = os.path.splitext(os.path.basename(p))[0]
+            try:
+                return int(base)
+            except ValueError:
+                return base
+
+        files = sorted(files, key=sort_key)
+
+        imgs = []
+        first_size = None
+        for f in files:
+            im = Image.open(f).convert("RGB")
+            if first_size is None:
+                first_size = im.size
+            elif im.size != first_size:
+                im = im.resize(first_size, Image.BILINEAR)
+            imgs.append(im)
+
+        frame_duration = max(1, int(round(1000 / fps)))
+        durations = [frame_duration] * len(imgs)
+        if hold_last_ms and len(durations) > 0:
+            durations[-1] += int(hold_last_ms)
+
+        imgs[0].save(
+            out_gif_path,
+            save_all=True,
+            append_images=imgs[1:],
+            duration=durations,
+            loop=0,
+            disposal=2,
+            optimize=True,
+        )
+        print(f"Saved GIF: {out_gif_path} ({len(imgs)} frames)")
     
     cfg = make_simple_cfg(sim_settings)
     sim = habitat_sim.Simulator(cfg)
@@ -503,9 +539,10 @@ def part3(target_id, path):
             delay = 15
             cv2.waitKey(delay)
     print("Navigation completed")
+    frames_to_gif(data_root + "rgb/", f"../results/{target}.gif")
     
 if __name__ == "__main__":
     meta = part1()
-    target_id, path = part2(meta)
+    target_id, target, path = part2(meta)
     path = [[x * 10000./255 for x in row] for row in path]
-    part3(target_id, path)
+    part3(target_id, target, path)
