@@ -59,11 +59,39 @@ def your_fk(DH_params : dict, q : list or tuple or np.ndarray, base_pos) -> np.n
     
     #### your code ####
     
+    def dh_transform(a, d, alpha, theta):
+        ca, sa = np.cos(alpha), np.sin(alpha)
+        ct, st = np.cos(theta), np.sin(theta)
+        T = np.array([
+            [ ct, -st*ca,  st*sa, a*ct],
+            [ st,  ct*ca, -ct*sa, a*st],
+            [  0,     sa,     ca,    d],
+            [  0,      0,      0,    1]
+        ], dtype=np.float64)
+        return T
 
-    # A = ? # may be more than one line
-    # jacobian = ? # may be more than one line
+    # Forward kinematics
+    T_list = [A]
+    T = A.copy()
+    for i in range(6):
+        a = DH_params[i]['a']
+        d = DH_params[i]['d']
+        alpha = DH_params[i]['alpha']
+        theta = float(q[i])
+        T = T @ dh_transform(a, d, alpha, theta)
+        T_list.append(T)
 
-    raise NotImplementedError
+    # End-effector pose
+    A = T_list[-1].copy()
+
+    # Jacobian
+    p_e = T_list[-1][:3, 3]
+    for i in range(6):
+        z_im1 = T_list[i][:3, 2]
+        p_im1 = T_list[i][:3, 3]
+        jacobian[:3, i] = np.cross(z_im1, (p_e - p_im1))
+        jacobian[3:, i] = z_im1
+    
     # hint : 
     # https://automaticaddison.com/the-ultimate-guide-to-jacobian-matrices-for-robotics/
     
