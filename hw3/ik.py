@@ -129,7 +129,7 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
         if Algorithm == "Pseudo-Inverse":
             # Pseudo-inverse
             dq = alpha * (np.linalg.pinv(J, rcond=rcond) @ dx)
-        else:
+        else: # BONUS
             # Damped Least Squares (Levenberg-Marquardt method)
             # https://en.wikipedia.org/wiki/Levenberg%E2%80%93Marquardt_algorithm
             dq = alpha * (J.T @ np.linalg.inv(J @ J.T + (damping**2) * np.eye(6)) @ dx)
