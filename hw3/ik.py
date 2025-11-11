@@ -83,84 +83,64 @@ def your_ik(robot_id, new_pose : list or tuple or np.ndarray,
     # 3. You may use some hyper parameters (i.e., step rate) in optimization loops
 
     ###################
-    # ----- hyper-parameters -----
-    step = 0.35           # step size for dq update (0~1)
-    lam = 1e-3            # damping for DLS (avoid singularities)
-    w_pos = 1.0           # weight for position error
-    w_rot = 0.5           # weight for orientation error
+    
+    # Algorithm choose
+    Algorithm = "Pseudo-Inverse" # "Damped Least Squares" # BONUS
+    
+    # Target position and quaternion
+    tgt_pos  = np.asarray(new_pose[:3],  dtype=np.float64)
+    tgt_quat = np.asarray(new_pose[3:7], dtype=np.float64)
+    if np.linalg.norm(tgt_quat) == 0:
+        tgt_quat = np.array([0.0, 0.0, 0.0, 1.0])
+    else:
+        tgt_quat = tgt_quat / np.linalg.norm(tgt_quat)
 
-    # desired pose
-    des_pos = np.array(new_pose[:3], dtype=np.float64)
-    des_quat = np.array(new_pose[3:], dtype=np.float64)  # (x, y, z, w)
+    # Hyper parameters
+    alpha   = 0.5
+    damping = 1e-3
+    w_pos   = 1.0
+    w_rot   = 0.5
+    dq_cap  = 0.3
+    rcond  = 1e-4
 
-    dh = get_ur5_DH_params()  # use the HW-provided DH set (fk.py)
-
-    def wrap_pi(a):
-        return (a + np.pi) % (2*np.pi) - np.pi
-
-    def clamp_to_limits(qv):
-        out = qv.copy()
-        for j in range(6):
-            lo, hi = joint_limits[j]
-            out[j] = np.clip(out[j], lo, hi)
-        # also wrap to (-pi, pi] to keep it numerically stable
-        return wrap_pi(out)
-
-    def pose7_from_fk(qv):
-        pose7, J = your_fk(dh, qv, base_pos)  # expects (pose7, J6x6)
-        pos = pose7[:3]
-        quat = pose7[3:]
-        return pos, quat, J
-
-    def numeric_jacobian(qv, eps=1e-4):
-        """
-        Central-difference numerical Jacobian on [x,y,z,rotvec(3)].
-        """
-        base_pos_cur, quat_cur, _ = pose7_from_fk(qv)
-        rotvec_cur = R.from_quat(quat_cur).as_rotvec()
-        f0 = np.hstack([base_pos_cur, rotvec_cur])
-
-        Jnum = np.zeros((6, 6), dtype=np.float64)
-        for j in range(6):
-            dq = np.zeros(6); dq[j] = eps
-            qp = qv + dq; qm = qv - dq
-            pos_p, quat_p, _ = pose7_from_fk(qp)
-            pos_m, quat_m, _ = pose7_from_fk(qm)
-            rv_p = R.from_quat(quat_p).as_rotvec()
-            rv_m = R.from_quat(quat_m).as_rotvec()
-            fp = np.hstack([pos_p, rv_p]); fm = np.hstack([pos_m, rv_m])
-            Jnum[:, j] = (fp - fm) / (2.0 * eps)
-        return Jnum
+    DH = get_ur5_DH_params()
 
     for _ in range(max_iters):
-        cur_pos, cur_quat, J = pose7_from_fk(tmp_q)
+        cur_pose, J = your_fk(DH, tmp_q, base_pos)
+        cur_pos  = np.asarray(cur_pose[:3],  dtype=np.float64)
+        cur_quat = np.asarray(cur_pose[3:7], dtype=np.float64)
+        if np.linalg.norm(cur_quat) == 0:
+            cur_quat = np.array([0.0, 0.0, 0.0, 1.0])
+        else:
+            cur_quat = cur_quat / np.linalg.norm(cur_quat)
 
-        # 6D task-space error: [position; orientation_rotvec]
-        e_pos = des_pos - cur_pos
-        R_des = R.from_quat(des_quat)
-        R_cur = R.from_quat(cur_quat)
-        R_err = R_des * R_cur.inv()
-        e_rot = R_err.as_rotvec()  # angle-axis (axis*angle)
+        # Position error
+        pos_err = tgt_pos - cur_pos
+        # Rotation error
+        Rc = R.from_quat(cur_quat).as_matrix()
+        Rd = R.from_quat(tgt_quat).as_matrix()
+        R_err = Rc.T @ Rd
+        rot_err = R.from_matrix(R_err).as_rotvec()
 
-        e = np.hstack([w_pos * e_pos, w_rot * e_rot])
-
-        if np.linalg.norm(e) < stop_thresh:
+        dx = np.hstack([w_pos * pos_err, w_rot * rot_err])
+        if np.linalg.norm(dx) < stop_thresh:
             break
+        
+        if Algorithm == "Pseudo-Inverse":
+            # Pseudo-inverse
+            dq = alpha * (np.linalg.pinv(J, rcond=rcond) @ dx)
+        else:
+            # Damped Least Squares (Levenberg-Marquardt method)
+            # https://en.wikipedia.org/wiki/Levenberg%E2%80%93Marquardt_algorithm
+            dq = alpha * (J.T @ np.linalg.inv(J @ J.T + (damping**2) * np.eye(6)) @ dx)
+        dq = np.clip(dq, -dq_cap, dq_cap)
 
-        # Use FK's Jacobian if valid; else fall back to numeric Jacobian
-        use_J = (J is not None) and np.all(np.isfinite(J)) and J.shape == (6, 6)
-        if not use_J:
-            J = numeric_jacobian(tmp_q)
+        # Update joint angles
+        tmp_q = tmp_q + dq
+        for j in range(6):
+            lo, hi = joint_limits[j]
+            tmp_q[j] = np.clip(tmp_q[j], lo, hi)
 
-        # Damped Least Squares (DLS) pseudo-inverse: J^T (J J^T + λ^2 I)^{-1}
-        JT = J.T
-        JJt = J @ JT
-        dq = JT @ np.linalg.solve(JJt + (lam**2) * np.eye(6), e)
-
-        # integrate, clamp, and wrap
-        tmp_q = tmp_q + step * dq
-        tmp_q = clamp_to_limits(tmp_q)
-    
     return list(tmp_q) # 6 DoF
 
 
